@@ -641,7 +641,7 @@ async function boot(){
   db.doc("config/parametros").onSnapshot(s=>{const t=s.exists?Number(s.data().tolerancia):0;tol=isNaN(t)?0:t;if(session){if(cartera)cartera=Object.assign({},cartera,{clientes:cartera.clientes.map(prep)});if(allCli){const m={};Object.values(allCli).forEach(c=>m[c.id]=prep(c));allCli=m}render()}},()=>{});
   let actuPrev=null;
   db.doc("config/actualizacion").onSnapshot(s=>{actu=s.exists?s.data():null;const c=actu&&actu.cuando;if(actuPrev!==null&&c!==actuPrev&&session&&carteraKey){loadCartera(carteraKey,true);if(unsubAll){unsubAll();unsubAll=null;allCli=null}}actuPrev=c||"";if(session)render()},()=>{});
-  db.doc("config/vendedores").onSnapshot(s=>{if(s.exists){vendedores=s.data().vendedores||[];if(session&&isAdmin())render()}},()=>{});
+  db.doc("config/vendedores").onSnapshot(s=>{if(s.exists){vendedores=s.data().vendedores||[];if(session&&isAdmin())render();else if(!session&&!$("login").classList.contains("hidden")){const v=$("lgUser").value;showLogin();if(v)$("lgUser").value=v;updFirst()}}},()=>{});
   db.doc("config/claves").onSnapshot(s=>{claves=s.exists?s.data():{};if(tab==="usuarios")render();else if(!$("login").classList.contains("hidden"))updFirst()},()=>{});
   const s=ls.get("agenda_sesion");
   if(s&&window.AGENDA.user()===s.key&&(s.key==="admin"||vendedores.some(v=>v.key===s.key&&!BAJAS.includes(v.key)))){session=s;startApp()}else showLogin();
