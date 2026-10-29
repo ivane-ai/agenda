@@ -360,7 +360,7 @@ function procesar(XLSX,books,plazos){
     if(fac[key])fac[key].cob+=imp;
   }
   // ---- deuda por cliente: informe de vencimientos (el que vale para cobrar)
-  const deuda={},pacr={},vist=new Set(),vmeta={},totAV={},ndCta={};let ndN=0,ndT=0;let dup=0,maxV="",totV=0,nComp=0,ord=0;
+  const fab={};const deuda={},pacr={},vist=new Set(),vmeta={},totAV={},ndCta={};let ndN=0,ndT=0;let dup=0,maxV="",totV=0,nComp=0,ord=0;
   const empOf=(cod,nro)=>{for(const e of ["COMPC","PETROCOM"]){const f=fac[e+"|"+cod+"|"+nro];if(f)return EMPN[e]}return ""};
   for(const r of V.rows){
     const cta=code(r[V.g("A")]);if(!cta)continue;
@@ -374,6 +374,7 @@ function procesar(XLSX,books,plazos){
     const key=(fac["COMPC|"+cod+"|"+nro]||fac["PETROCOM|"+cod+"|"+nro]||{}).key;
     const cnd=norm(r[V.g("AB")]).toUpperCase(),ck=pk(cnd),vsis=fecha(r[V.g("AA")]),vpl=(ck in PL&&fm)?addDays(fm,PL[ck]):"";if(!vpl){sinPlazo[cnd||"(vacía)"]=(sinPlazo[cnd||"(vacía)"]||0)+1}
     const it={e:empOf(cod,nro),c:cod+" "+nro,f:fm,v:vpl||vsis,imp:Math.round(num(r[V.g("AI")])),pen:Math.round(pen),o:ord++,cond:norm(r[V.g("AB")]).toUpperCase(),l:key?(lines[key]||[]):[]};
+    (fab[cta]=fab[cta]||[]).push({c:cod+" "+nro,t:cod==="SD"?"Saldo inicial":/^C/.test(cod)?"Nota de crédito":/^D/.test(cod)?"Nota de débito":"",f:fm,v:vsis,cond:it.cond,imp:Math.round(num(r[V.g("AI")])*100)/100});
     if(/^D/.test(cod)){ndCta[cta]=(ndCta[cta]||0)+pen;ndN++;ndT+=pen;continue}
     if(cod==="SD")it.t="Saldo inicial";else if(/^C/.test(cod))it.t="Nota de crédito";
     (deuda[cta]=deuda[cta]||[]).push(it);
@@ -449,6 +450,7 @@ function procesar(XLSX,books,plazos){
       if(sinap[base])c.sinap=sinap[base];if(afavor[base])c.afavor=afavor[base];if(ncanc[base])c.ncanc=ncanc[base];
       const dd=(deuda[base]||[]).slice().sort((a,b)=>a.f.localeCompare(b.f)||a.c.localeCompare(b.c));
       if(dd.length){c.deuda=dd;c.pend=dd.reduce((a,x)=>a+x.pen,0)}
+      if(fab[base])c.fab=fab[base].slice().sort((a,b)=>(b.f||"").localeCompare(a.f||""));
     }
     Object.keys(c).forEach(k=>{if(c[k]===""||c[k]==null||(Array.isArray(c[k])&&!c[k].length))delete c[k]});
     if(!c.loc)c.loc="Sin dato";
@@ -459,7 +461,7 @@ function procesar(XLSX,books,plazos){
   const sinMaestro=Object.keys(deuda).filter(k=>!seen[k]);
   if(sinMaestro.length){
     sinMaestro.forEach(k=>{const vm=Object.assign({},vmeta[k]||{rs:"Cuenta "+k,vend:"Sin vendedor"});if(REASIG[k])vm.vend=REASIG[k];const _x=0,dd=deuda[k].sort((a,b)=>a.f.localeCompare(b.f)||a.c.localeCompare(b.c));
-      const c={id:k,n:vm.rs,loc:"Sin dato",deuda:dd,pend:dd.reduce((a,x)=>a+x.pen,0)};if(pacr[k])c.pacr=Math.round(pacr[k]);if(geo[k])c.geo=geo[k];if(sinap[k])c.sinap=sinap[k];if(afavor[k])c.afavor=afavor[k];if(ncanc[k])c.ncanc=ncanc[k];seen[k]=c;(out[vm.vend]=out[vm.vend]||[]).push(c)});
+      const c={id:k,n:vm.rs,loc:"Sin dato",deuda:dd,pend:dd.reduce((a,x)=>a+x.pen,0)};if(fab[k])c.fab=fab[k].slice().sort((a,b)=>(b.f||"").localeCompare(a.f||""));if(pacr[k])c.pacr=Math.round(pacr[k]);if(geo[k])c.geo=geo[k];if(sinap[k])c.sinap=sinap[k];if(afavor[k])c.afavor=afavor[k];if(ncanc[k])c.ncanc=ncanc[k];seen[k]=c;(out[vm.vend]=out[vm.vend]||[]).push(c)});
     warn.push(`${sinMaestro.length} clientes con deuda no están en la hoja CLIENTES (cuentas ${sinMaestro.slice(0,8).join(", ")}${sinMaestro.length>8?"…":""}). Se agregaron con el vendedor que figura en el informe de vencimientos.`);
   }
   const vendedores=Object.entries(out).sort((a,b)=>b[1].length-a[1].length).map(([n,l])=>({key:slug(n),nombre:n,clientes:l.length}));
@@ -1842,30 +1844,15 @@ function refreshSheet(){
     </div>${compraBox(c)}${h25Box(c)}
     <button class="primary" type="button" id="goReg">➕ Registrar contacto</button>`;
   }else if(shTab==="cuenta"){
-    const d=c.deuda||[];
-    body=`<div class="facts">
-      <div class="fact ${c.venc>0?"warn":""}"><div class="v">${c.venc>0?mill(c.venc):"$ 0"}</div><div class="k">Vencido</div></div>
-      <div class="fact"><div class="v">${c.pend>0?mill(c.pend):"$ 0"}</div><div class="k">Pendiente total</div></div>
-      <div class="fact"><div class="v">${c.uc?fshort(c.uc):"—"}</div><div class="k">Última compra</div></div>
-      <div class="fact"><div class="v">${c.ucb?fshort(c.ucb):"—"}</div><div class="k">Último pago</div></div>
-      ${c.pacr?`<div class="fact good"><div class="v">${mill(c.pacr)}</div><div class="k">Pendiente de acreditar</div></div>`:""}</div>
-    ${c.afavor?`<div class="notice" style="border-color:var(--green)">Este cliente tiene <b>saldo a favor de ${money(c.afavor)}</b>. No hay nada para cobrar.</div>`:""}
-    ${c.sinap?`<div class="notice">Ya se descontaron ${money(c.sinap)} que el cliente pagó y administración todavía no aplicó a ninguna factura${c.ncanc?` (${c.ncanc} ${c.ncanc===1?"factura quedó paga y no se muestra":"facturas quedaron pagas y no se muestran"})`:""}. Se descuenta empezando por la factura que vence primero.</div>`:""}
-    ${c.pacr?`<div class="notice">Este cliente tiene ${money(c.pacr)} en pagos recibidos que todavía no se acreditaron. Revisalo antes de reclamar.</div>`:""}
-    ${c.est==="perdido"?`<div class="notice" style="border-color:var(--red)">Dejó de comprar: hace <b>${c.ds} días</b> que no compra${c.nf>1?" y compraba "+esc(compraTxt(c)):" (compró una sola vez desde mayo)"}.</div>`:""}
-    ${c.est==="sincompra"?`<div class="notice">No tiene compras desde mayo, cuando se cambió de sistema. Si sigue siendo cliente, registralo en Contactos.</div>`:""}
-    ${c.lc?`<h3>Última compra · ${fdate(c.lc.f)}${c.ds!=null?` (hace ${c.ds} ${c.ds===1?"día":"días"})`:""}</h3><div class="inv"><div class="ih"><b>${esc(c.lc.cs.join(", "))}</b><b>${money(c.lc.t)}</b></div>
-      ${c.lc.l&&c.lc.l.length?`<div class="il">${c.lc.l.map(l=>`<div><span>${esc(l[0])}</span><span>${l[1]?l[1].toLocaleString("es-AR"):""}</span><span>${money(l[2])}</span></div>`).join("")}</div>`:""}</div>
-      <div class="kvs">${c.pm?`<div class="kv"><span>Promedio por mes desde mayo (sin IVA)</span><b>${money(c.pm)}</b></div>`:""}${c.fr?`<div class="kv"><span>Compraba cada</span><b>${c.fr} días</b></div>`:""}<div class="kv"><span>Facturas desde mayo</span><b>${c.nf||0}</b></div></div>`:""}
-    ${c.dk&&c.dk[0]!=null?`<h3>Días en la calle de este cliente</h3><div class="kvs"><div class="kv"><span>Ponderados (cerradas y abiertas)</span><b>${fmtN1(c.dk[0])} días</b></div>${c.dk[1]!=null?`<div class="kv"><span>Cerrado: de la factura al cobro</span><b>${fmtN1(c.dk[1])} días · ${fmtN1(c.dk[2])} de atraso</b></div>`:""}${c.dk[3]!=null?`<div class="kv"><span>Abierto: lo que llevan sin cobrar</span><b>${fmtN1(c.dk[3])} días · ${fmtN1(c.dk[4])} de atraso</b></div>`:""}</div>`:""}
-    ${c.top&&c.top.length?`<h3>Lo que más compra</h3><div style="font-size:15px">${c.top.map(esc).join(" · ")}</div>`:""}
-    <h3>Facturas con saldo</h3>
-    ${d.length?d.map(x=>{const at=x.v&&x.v<today()?daysBetween(x.v,today()):0;const vencida=!!(x.v&&due(x)<today()),ic=inf[c.id+"#"+facKey(x)];
-      return `<div class="inv"><div class="ih"><b>${esc(x.c)}${x.t?` <span class="sm" style="color:var(--muted);font-weight:500">${esc(x.t)}</span>`:""}</b>${ic?`<span class="tag t-green">Informada cobrada ${fshort(ic.fecha)}</span>`:`<span class="tag ${vencida?"t-amber":"t-grey"}">${vencida?(at?at+" días vencida":"Vencida"):(x.v?"No vencida":"Sin plazo")}</span>`}</div>
-      <div class="im">${x.e?esc(x.e)+" · ":""}${x.f?fshort(x.f)+(x.f.slice(0,4)!==today().slice(0,4)?" "+x.f.slice(0,4):""):""}${x.cond?" · "+esc(x.cond):""}${x.v?" · vence "+fshort(x.v):""} · ${money(x.imp)}${x.pag?` · <span style="color:var(--green)">pagó ${money(x.pag)}</span>`:""}${x.pen<x.imp?" · <b>debe "+money(x.pen)+"</b>":""}</div>
-      ${x.l&&x.l.length?`<div class="il">${x.l.map(l=>`<div><span>${esc(l[0])}</span><span>${l[1]?l[1].toLocaleString("es-AR"):""}</span><span>${money(l[2])}</span></div>`).join("")}</div>`:""}</div>`}).join("")
-     :`<div style="color:var(--muted);font-size:14px">No tiene facturas con saldo desde mayo.</div>`}
-    <p style="font-size:13px;color:var(--muted)">Comprobantes abiertos según el informe de vencimientos de Softland. Vencimiento del sistema${tol?" (se considera vencida "+tol+(tol===1?" día":" días")+" después)":""}.</p>`;
+    const FA=c.fab||[],fd=x=>x?x.slice(8,10)+"/"+x.slice(5,7)+"/"+x.slice(0,4):"",m2=v=>"$ "+Number(v||0).toLocaleString("es-AR",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const lc=c.lc,ab=lc?FA.filter(x=>lc.cs.includes(x.c)):[];
+    body=(lc?`<h3>Última compra · ${fdate(lc.f)}${c.ds!=null?` (hace ${c.ds} ${c.ds===1?"día":"días"})`:""}</h3>
+      <div class="inv"><div class="ih"><b>${esc(lc.cs.join(", "))}</b><b>${ab.length?m2(ab.reduce((a,x)=>a+x.imp,0)):money(lc.t)}</b></div>
+      <div class="im">${fd(lc.f)}${ab[0]&&ab[0].cond?" · "+esc(ab[0].cond):c.cond?" · "+esc(c.cond):""}${ab[0]&&ab[0].v?" · vence "+fd(ab[0].v):""}</div>
+      ${lc.l&&lc.l.length?`<div class="il">${lc.l.map(l=>`<div><span>${esc(l[0])}</span><span>${l[1]?l[1].toLocaleString("es-AR"):""}</span><span></span></div>`).join("")}</div>`:""}</div>`:`<div class="sm" style="color:var(--muted);margin-top:12px">No tiene compras registradas desde mayo.</div>`)+
+     `<h3>Facturas</h3>`+(FA.length?FA.map(x=>`<div class="inv"><div class="ih"><b>${esc(x.c)}${x.t?` <span class="sm" style="color:var(--muted);font-weight:500">${esc(x.t)}</span>`:""}</b><b>${m2(x.imp)}</b></div><div class="im">Fecha ${fd(x.f)}${x.cond?" · "+esc(x.cond):""}${x.v?" · vence "+fd(x.v):""}</div></div>`).join("")
+       :`<div style="color:var(--muted);font-size:14px">No tiene facturas abiertas en Softland.</div>`)+
+     `<p style="font-size:13px;color:var(--muted)">Facturas abiertas en Softland, con su importe total (IVA y percepciones incluidos).</p>`;
   }else{
     body=`<button class="primary" type="button" id="goReg">➕ Registrar contacto</button>
   <h3>Historial de contactos (${st.es.length})</h3>
