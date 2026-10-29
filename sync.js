@@ -210,6 +210,7 @@
     pending: function () { return outbox.length; },
     estado: function () { return estado; },
     ultima: function () { return meta.lastOk; },
+    rebajar: function () { meta.desde = 0; meta.sync1 = false; marcar("__meta"); return Promise.resolve(pullP).then(function () { return bajar(); }); },
     importar: function (obj) { Object.keys(obj).forEach(function (p) { if (obj[p] != null) doc(p).set(obj[p]); }); return enviar(); }
   };
 
