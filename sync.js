@@ -143,7 +143,7 @@
     pulling = true; estado = "sincronizando"; pendUIx();
     var uno = function () {
       return llamar({ op: "pull", token: meta.token, desde: meta.desde || 0, sin: ["base"], gz: GZ ? 1 : 0 }, 120000).then(function (r) {
-        if (!r || !r.ok) { if (r && r.error === "sesion") avisoSesion(); return false; }
+        if (!r || !r.ok) { if (r && r.error === "sesion") avisoSesion(); else estado = "error: " + ((r && (r.detalle || r.error)) || "respuesta vacía"); return false; }
         return docsDe(r).then(function (docs) {
           var pendientes = {}; outbox.forEach(function (o) { pendientes[o.r] = 1; });
           docs.forEach(function (x) { if (x.r.indexOf("base/") === 0) return; if (!pendientes[x.r]) aplicar(x.r, x.d, x.t); }); // lo cargado sin señal no se pisa
@@ -152,8 +152,8 @@
         });
       });
     };
-    pullP = uno().then(function (ok) { if (ok) { meta.sync1 = true; marcar("__meta"); } return ok; }).catch(function () { return false; })
-      .then(function (ok) { pulling = false; pullP = null; estado = estado === "sesion" ? "sesion" : ""; pendUIx(); avisarSync(); return ok; });
+    pullP = uno().then(function (ok) { if (ok) { meta.sync1 = true; marcar("__meta"); } return ok; }).catch(function (e) { estado = "error: no se pudo leer la planilla (" + ((e && e.message) || e) + ")"; return false; })
+      .then(function (ok) { pulling = false; pullP = null; if (ok || estado === "sincronizando") estado = ""; pendUIx(); avisarSync(); return ok; });
     return pullP;
   }
   // historial de ventas y cobros (solo administración, al actualizar con el crudo)
