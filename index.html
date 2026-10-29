@@ -2076,6 +2076,7 @@ async function crudoABase(XLSX,wb){
   const T={vPC:sh(/^CRUDO VENTAS PC$/i),vPE:sh(/^CRUDO VENTAS PETROCOM$/i),cPC:sh(/^CRUDO COBROS PC$/i),cPE:sh(/^CRUDO COBROS PETROCOM$/i),ven:sh(/^CRUDO VENCIMIENTOS$/i),cli:sh(/^CRUDO CLIENTES$/i)};
   const NOM={vPC:"CRUDO VENTAS PC",vPE:"CRUDO VENTAS PETROCOM",cPC:"CRUDO COBROS PC",cPE:"CRUDO COBROS PETROCOM",ven:"CRUDO VENCIMIENTOS",cli:"CRUDO CLIENTES"};
   const falta=Object.keys(T).filter(k=>!T[k]);if(falta.length)throw new Error("Al crudo le faltan las hojas: "+falta.map(k=>NOM[k]).join(", "));
+  if(window.AGENDA&&window.AGENDA.bajarBase){impMsg="Bajando el historial de ventas y cobros…";render();await window.AGENDA.bajarBase()}
   const st=await db.doc("base/static").get();if(!st.exists)throw new Error("Todavía no está cargado el historial de ventas y cobros en la planilla (respaldo de historial).");
   const S=st.data(),warn=[];
   // ---- ventas → BASE FACTURADO (48 columnas)
@@ -2235,6 +2236,12 @@ function bind(){
   });
   bindDel($("main"));
 }
+// la app propia avisa qué datos llegaron en cada sincronización: se recarga solo lo que cambió
+window.addEventListener("agenda-sync",e=>{const ps=(e&&e.detail)||[];if(!session||!ps.length)return;
+  if(carteraKey&&ps.some(p=>p.indexOf("carteras/"+carteraKey+"__")===0))loadCartera(carteraKey,true);
+  if(unsubAll&&ps.some(p=>p.indexOf("carteras/")===0)){unsubAll();unsubAll=null;allCli=null}
+  if(ps.some(p=>p.indexOf("historico/")===0)){h25=null;h26={}}
+  render()});
 window.addEventListener("error",e=>{try{toast("Error: "+(e.message||e))}catch(x){}});
 window.addEventListener("unhandledrejection",e=>{try{toast("Error: "+((e.reason&&(e.reason.code||e.reason.message))||e.reason))}catch(x){}});
 boot();

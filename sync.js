@@ -8,8 +8,8 @@
   "use strict";
   var API = window.AGENDA_API_URL;
   var DBN = "agenda-comercial", ST = "kv";
-  var S = {}, T = {}, meta = { token: "", user: "", desde: 0, lastOk: 0 }, outbox = [];
-  var L = { doc: {}, col: [] }, idb = null, sucio = {}, guardando = null, flushing = false, pulling = false, estado = "";
+  var S = {}, T = {}, meta = { token: "", user: "", desde: 0, desdeBase: 0, lastOk: 0, sync1: false }, outbox = [];
+  var L = { doc: {}, col: [] }, idb = null, sucio = {}, guardando = null, flushing = false, pulling = false, pullP = null, baseP = null, estado = "", cambiados = {};
 
   // ---------- IndexedDB ----------
   function abrir() {
@@ -67,6 +67,13 @@
       .catch(function (e) { clearTimeout(to); throw e; });
   }
   var online = function () { return navigator.onLine !== false; };
+  var GZ = typeof DecompressionStream !== "undefined" && typeof Response !== "undefined";
+  function docsDe(r) {
+    if (!r || !r.gz) return Promise.resolve((r && r.docs) || []);
+    var bin = atob(r.gz), u = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("gzip"))).text().then(function (t) { return JSON.parse(t); });
+  }
 
   // ---------- avisos a la pantalla ----------
   var clone = function (x) { return x == null ? x : JSON.parse(JSON.stringify(x)); };
@@ -87,14 +94,15 @@
       pendUIx();
     }, 30);
   }
-  function aplicar(p, d, t) { if (d == null) delete S[p]; else S[p] = d; T[p] = t || T[p] || 0; marcar(p); avisar(p); }
+  function aplicar(p, d, t) { if (d == null) delete S[p]; else S[p] = d; T[p] = t || T[p] || 0; marcar(p); avisar(p); cambiados[p] = 1; }
+  function avisarSync() { var ps = Object.keys(cambiados); cambiados = {}; if (ps.length) try { window.dispatchEvent(new CustomEvent("agenda-sync", { detail: ps })); } catch (e) { } }
 
   // ---------- escribir (primero en el teléfono, después al script) ----------
   function encolar(op) { outbox.push(op); marcar("__outbox"); pendUIx(); setTimeout(enviar, 300); }
   function doc(p) {
     return {
       path: p, id: p.split("/").pop(),
-      get: function () { return Promise.resolve(snap(p)); },
+      get: function () { if (!((p in S) && S[p] != null) && (pullP || (meta.token && !meta.sync1))) return (pullP || bajar()).then(function () { return snap(p); }); return Promise.resolve(snap(p)); },
       set: function (d) { aplicar(p, clone(d)); encolar({ k: "set", r: p, d: clone(d) }); return Promise.resolve(); },
       update: function (d) {
         if (!(p in S) || S[p] == null) { var e = new Error("not found"); e.code = "not-found"; return Promise.reject(e); }
@@ -130,17 +138,41 @@
     }).catch(function () { flushing = false; pendUIx(); });
   }
   function bajar() {
-    if (pulling || !meta.token || !online()) return Promise.resolve(false);
+    if (pullP) return pullP;
+    if (!meta.token || !online()) return Promise.resolve(false);
     pulling = true; estado = "sincronizando"; pendUIx();
-    return llamar({ op: "pull", token: meta.token, desde: meta.desde || 0 }, 120000).then(function (r) {
-      pulling = false; estado = "";
-      if (!r || !r.ok) { if (r && r.error === "sesion") avisoSesion(); pendUIx(); return false; }
-      var pendientes = {}; outbox.forEach(function (o) { pendientes[o.r] = 1; });
-      (r.docs || []).forEach(function (x) { if (!pendientes[x.r]) aplicar(x.r, x.d, x.t); }); // lo cargado sin señal no se pisa
-      meta.desde = r.hasta || meta.desde; meta.lastOk = Date.now(); marcar("__meta"); pendUIx();
-      if (!r.completo) return bajar();
-      return true;
-    }).catch(function () { pulling = false; estado = ""; pendUIx(); return false; });
+    var uno = function () {
+      return llamar({ op: "pull", token: meta.token, desde: meta.desde || 0, sin: ["base"], gz: GZ ? 1 : 0 }, 120000).then(function (r) {
+        if (!r || !r.ok) { if (r && r.error === "sesion") avisoSesion(); return false; }
+        return docsDe(r).then(function (docs) {
+          var pendientes = {}; outbox.forEach(function (o) { pendientes[o.r] = 1; });
+          docs.forEach(function (x) { if (x.r.indexOf("base/") === 0) return; if (!pendientes[x.r]) aplicar(x.r, x.d, x.t); }); // lo cargado sin señal no se pisa
+          meta.desde = r.hasta || meta.desde; meta.lastOk = Date.now(); marcar("__meta");
+          return r.completo ? true : uno();
+        });
+      });
+    };
+    pullP = uno().then(function (ok) { if (ok) { meta.sync1 = true; marcar("__meta"); } return ok; }).catch(function () { return false; })
+      .then(function (ok) { pulling = false; pullP = null; estado = estado === "sesion" ? "sesion" : ""; pendUIx(); avisarSync(); return ok; });
+    return pullP;
+  }
+  // historial de ventas y cobros (solo administración, al actualizar con el crudo)
+  function bajarBase() {
+    if (baseP) return baseP;
+    if (!meta.token || !online()) return Promise.resolve(false);
+    var uno = function () {
+      return llamar({ op: "pull", token: meta.token, desde: meta.desdeBase || 0, solo: ["base"], gz: GZ ? 1 : 0 }, 180000).then(function (r) {
+        if (!r || !r.ok) return false;
+        return docsDe(r).then(function (docs) {
+          var pendientes = {}; outbox.forEach(function (o) { pendientes[o.r] = 1; });
+          docs.forEach(function (x) { if (!pendientes[x.r]) aplicar(x.r, x.d, x.t); });
+          meta.desdeBase = r.hasta || meta.desdeBase; marcar("__meta");
+          return r.completo ? true : uno();
+        });
+      });
+    };
+    baseP = uno().catch(function () { return false; }).then(function (ok) { baseP = null; return ok; });
+    return baseP;
   }
   function sincronizar() { return enviar().then(bajar); }
   function avisoSesion() { estado = "sesion"; pendUIx(); }
@@ -158,13 +190,14 @@
   function login(u, p) {
     return llamar({ op: "login", usuario: u, clave: p }, 30000).then(function (r) {
       if (!r || !r.ok) return { ok: false, error: (r && r.error) || "No se pudo ingresar." };
-      if (meta.user && meta.user !== u) { Object.keys(S).forEach(function (k) { if (k.indexOf("config/") !== 0) { delete S[k]; marcar(k); } }); meta.desde = 0; }
-      meta.token = r.token; meta.user = u; estado = ""; marcar("__meta");
-      return bajar().then(function () { return { ok: true }; });
+      if (meta.user && meta.user !== u) { Object.keys(S).forEach(function (k) { if (k.indexOf("config/") !== 0) { delete S[k]; marcar(k); } }); meta.desde = 0; meta.desdeBase = 0; }
+      var cambio = meta.user !== u;
+      meta.token = r.token; meta.user = u; estado = ""; if (cambio) meta.sync1 = false; marcar("__meta");
+      return Promise.resolve(pullP).then(function () { return bajar(); }).then(function () { return { ok: true }; });
     }).catch(function () { return { ok: false, error: "Sin conexión. Para ingresar la primera vez hace falta señal." }; });
   }
   function logout() {
-    meta.token = ""; meta.user = ""; meta.desde = 0; marcar("__meta");
+    meta.token = ""; meta.user = ""; meta.desde = 0; meta.desdeBase = 0; meta.sync1 = false; marcar("__meta");
     Object.keys(S).forEach(function (k) { if (k.indexOf("config/") !== 0) { delete S[k]; marcar(k); } });
     outbox = []; marcar("__outbox");
   }
@@ -172,7 +205,7 @@
   // ---------- aviso de pendientes ----------
   function pendUIx() { try { if (typeof window.__agendaPendUI === "function") window.__agendaPendUI(); } catch (e) { } }
   window.AGENDA = {
-    login: login, logout: logout, sync: sincronizar,
+    login: login, logout: logout, sync: sincronizar, bajarBase: bajarBase,
     user: function () { return meta.token ? meta.user : ""; },
     pending: function () { return outbox.length; },
     estado: function () { return estado; },
